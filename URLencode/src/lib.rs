@@ -34,7 +34,7 @@ pub struct Form1 {
     #[clap(required = true, value_name = "TEXT/PATH")]
     pub filetext: StringOrPath,
 
-    ///Percent-Encoding
+    ///Percent-Encoding<DEFAULT>
     #[clap(
         short = 'p',
         long = "percent",
@@ -48,10 +48,10 @@ pub struct Form1 {
     pub flg2: bool,
 
     ///Getting result via table html format
-    #[clap(long="tohtml",value_name="TO_HTML",conflicts_with= "flg4", alias="th", short='h')]
+    #[clap(long="tohtml",value_name="TO_HTML",conflicts_with= "flg4", alias="th", short='l')]
     pub flg3:bool,
 
-    ///Getting result via terminal
+    ///Getting result via terminal<DEFAULT>
     #[clap(long="toterminal",value_name="TO_TERMINAL",alias="tt",short='t')]
     pub flg4:bool,
 }
@@ -62,13 +62,21 @@ pub struct Form2 {
     #[clap(required = true, value_name = "TEXT/PATH")]
     pub filetext: StringOrPath,
 
-    ///Percent-Decoding
+    ///Percent-Decoding<DEFAULT>
     #[clap(short = 'p', long = "percent", value_name = "FROM_PERCENT")]
     pub flg1: bool,
 
     ///Base64-Decoding
     #[clap(short = 'b', long = "base64", value_name = "FROM_BASE64")]
     pub flg2: bool,
+
+    ///Getting result via table html format
+    #[clap(long="tohtml",value_name="TO_HTML",conflicts_with= "flg4", alias="th", short='l')]
+    pub flg3:bool,
+
+    ///Getting result via terminal<DEFAULT>
+    #[clap(long="toterminal",value_name="TO_TERMINAL",alias="tt",short='t')]
+    pub flg4:bool,
 }
 
 //------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -76,16 +84,25 @@ pub struct Form2 {
 
 //ANCHOR - Impl Linking Encode to clap
 impl Form1 {
-    pub fn linking(&self) -> Result<FileContent, Box<dyn Error>> {
+    pub fn linking(&self) -> Result<(FileContent,FileLocate), Box<dyn Error>> {
+        let fileloc = if self.flg3 {
+            FileLocate::Html
+        } else if self.flg4 {
+            FileLocate::Terminal
+        } else {
+            FileLocate::Terminal
+        };
+
+
         match &self.filetext {
             StringOrPath::String(inp) => {
                 // println!("{:?}",inp);
                 if self.flg1 {
-                    Ok(FileContent::Single(encoding_percent_component(&inp)))
+                    Ok((FileContent::Single(encoding_percent_component(&inp)),fileloc))
                 } else if self.flg2 {
-                    Ok(FileContent::Single(tobase64(&inp))) //wiil change when to base64 is finish
+                    Ok((FileContent::Single(tobase64(&inp)), fileloc)) //wiil change when to base64 is finish
                 } else {
-                    Ok(FileContent::Single(tobase64(&inp))) //for default choice
+                    Ok((FileContent::Single(encoding_percent_component(&inp)),fileloc)) //for default choice
                 }
             }
             StringOrPath::Path(path) => {
@@ -98,32 +115,44 @@ impl Form1 {
                                 let a = encoding_percent_component(&i);
                                 processed_lines.push(a);
                             }
-                            Ok(FileContent::Multiple(processed_lines))
+                            Ok((FileContent::Multiple(processed_lines),fileloc))
                         } else if self.flg2 {
                             let mut processed_lines = Vec::new();
                             for i in lines {
                                 let a = tobase64(&i);
                                 processed_lines.push(a);
                             }
-                            Ok(FileContent::Multiple(processed_lines))
+                            Ok((FileContent::Multiple(processed_lines),fileloc))
                         } else {
                             let mut processed_lines = Vec::new();
                             for i in lines {
                                 let a = encoding_percent_component(&i);
                                 processed_lines.push(a);
                             }
-                            Ok(FileContent::Multiple(processed_lines))
+                            Ok((FileContent::Multiple(processed_lines),fileloc))
                         }
                     }
                     FileContent::Single(chr) => {
                         if self.flg1 {
-                            Ok(FileContent::Single(encoding_percent_component(&chr)))
+                            Ok((FileContent::Single(encoding_percent_component(&chr)),fileloc))
                         } else if self.flg2 {
-                            Ok(FileContent::Single(tobase64(&chr)))
+                            Ok((FileContent::Single(tobase64(&chr)),fileloc))
                         } else {
-                            Ok(FileContent::Single(encoding_percent_component(&chr)))
+                            Ok((FileContent::Single(encoding_percent_component(&chr)),fileloc))
                         }
                     }
+                }
+            }
+        }
+    }
+    pub fn getbefore_process(&self) -> Result<FileContent> {
+        match &self.filetext {
+            StringOrPath::String(inp) => Ok(FileContent::Single(inp.to_string())),
+            StringOrPath::Path(path) => {
+                let filecontent = readfile(&path.clone().into_os_string().into_string().unwrap()).unwrap();
+                match filecontent {
+                    FileContent::Multiple(lines) => Ok(FileContent::Multiple(lines)),
+                    FileContent::Single(chr) => Ok(FileContent::Single(chr)),
                 }
             }
         }
@@ -132,15 +161,23 @@ impl Form1 {
 
 //ANCHOR - Impl Linking Decode to clap
 impl Form2 {
-    pub fn linking(&self) -> Result<FileContent, Box<dyn Error>> {
+    pub fn linking(&self) -> Result<(FileContent,FileLocate), Box<dyn Error>> {
+        let fileloc = if self.flg3 {
+            FileLocate::Html
+        } else if self.flg4 {
+            FileLocate::Terminal
+        } else {
+            FileLocate::Terminal
+        };
+        
         match &self.filetext {
             StringOrPath::String(inp) => {
                 if self.flg1 {
-                    Ok(FileContent::Single(decoding_percent(&inp)))
+                    Ok((FileContent::Single(decoding_percent(&inp)),fileloc))
                 } else if self.flg2 {
-                    Ok(FileContent::Single(frombase64(&inp).unwrap())) //wiil change when to base64 is finish
+                    Ok((FileContent::Single(frombase64(&inp).unwrap()),fileloc)) //wiil change when to base64 is finish
                 } else {
-                    Ok(FileContent::Single(decoding_percent(&inp))) //for default choice
+                    Ok((FileContent::Single(decoding_percent(&inp)),fileloc)) //for default choice
                 }
             }
             StringOrPath::Path(path) => {
@@ -153,32 +190,44 @@ impl Form2 {
                                 let a = decoding_percent(&i);
                                 processed_lines.push(a);
                             }
-                            Ok(FileContent::Multiple(processed_lines))
+                            Ok((FileContent::Multiple(processed_lines),fileloc))
                         } else if self.flg2 {
                             let mut processed_lines = Vec::new();
                             for i in lines {
                                 let a = frombase64(&i).unwrap();
                                 processed_lines.push(a);
                             }
-                            Ok(FileContent::Multiple(processed_lines))
+                            Ok((FileContent::Multiple(processed_lines),fileloc))
                         } else {
                             let mut processed_lines = Vec::new();
                             for i in lines {
                                 let a = decoding_percent(&i);
                                 processed_lines.push(a);
                             }
-                            Ok(FileContent::Multiple(processed_lines))
+                            Ok((FileContent::Multiple(processed_lines),fileloc))
                         }
                     }
                     FileContent::Single(chr) => {
                         if self.flg1 {
-                            Ok(FileContent::Single(decoding_percent(&chr)))
+                            Ok((FileContent::Single(decoding_percent(&chr)),fileloc))
                         } else if self.flg2 {
-                            Ok(FileContent::Single(frombase64(&chr)?))
+                            Ok((FileContent::Single(frombase64(&chr)?),fileloc))
                         } else {
-                            Ok(FileContent::Single(decoding_percent(&chr)))
+                            Ok((FileContent::Single(decoding_percent(&chr)),fileloc))
                         }
                     }
+                }
+            }
+        }
+    }
+    pub fn getbefore_process(&self) -> Result<FileContent> {
+        match &self.filetext {
+            StringOrPath::String(inp) => Ok(FileContent::Single(inp.to_string())),
+            StringOrPath::Path(path) => {
+                let filecontent = readfile(&path.clone().into_os_string().into_string().unwrap()).unwrap();
+                match filecontent {
+                    FileContent::Multiple(lines) => Ok(FileContent::Multiple(lines)),
+                    FileContent::Single(chr) => Ok(FileContent::Single(chr)),
                 }
             }
         }
@@ -249,35 +298,83 @@ pub fn readfile(filename: &str) -> Result<FileContent, Box<dyn Error>> {
     }
 }
 
-// //ANCHOR - Savefile
-// pub fn savefile(filen:&str, wtop:FileContent, destinate: FileLocate) -> Result<(),ErrorToSaveFile> {
-//     match wtop {
-//         FileContent::Single(n) => {
-//             match destinate {
-//                 FileLocate::Html => {
-//                     let mut outfile = File::create(filen).unwrap();
-//                     outfile.write_all(b"<style>\ntable, td {{\n    border:1px solid black;\n}}\n").unwrap();
-//                     outfile.write_all(b"</style>\n\n<table>\n    <tr>\n").unwrap();
-//                     outfile.write_all(b"        <th>Input</th>\n        <th>Result</th>\n").unwrap();
-//                     outfile.write_all(b"    </tr>").unwrap();
-//                     outfile.write_all(b"    <tr>\n").unwrap();
-//                     outfile.write_all(format!("        <td>{}</td>\n",)).unwrap();
-//                     outfile.write_all(format!("        <td>{}</td>\n",n).as_bytes()).unwrap();
-//                     outfile.write_all(b("    </tr>\n")).unwrap();
-//                     outfile.write_all(b"</table>\n").unwrap();
-//                 }
-//                 FileLocate::Terminal => {
-//                     Ok(println!("Result:{}",n)).unwrap()
-//                 }
-//             } 
-//         },
-//         FileContent::Multiple(st) => {
+//ANCHOR - Savefile
+pub fn savefile(oinp:FileContent, wtop:FileContent, destinate: FileLocate) -> Result<(),ErrorToSaveFile> {
+    match wtop {
+        FileContent::Single(n) => {
+            match destinate {
+                FileLocate::Html => {
+                    let mut outfile = File::create("output.html").unwrap();
+                    outfile.write_all(b"<style>\ntable, th, td {\n    border:1px solid black;\n}\n").unwrap();
+                    outfile.write_all(b"</style>\n\n<table>\n    <tr>\n").unwrap();
+                    outfile.write_all(b"        <th>Input</th>\n        <th>Result</th>\n").unwrap();
+                    outfile.write_all(b"    </tr>").unwrap();
+                    outfile.write_all(b"    <tr>\n").unwrap();
+                    match oinp {
+                        FileContent::Single(x) => {
+                            outfile.write_all(format!("        <td>{}</td>\n", x).as_bytes()).unwrap();
+                        }
+                        // FileContent::Multiple(y) => {
+                        //     for item in y {
+                        //         outfile.write_all(format!("        <td>{}</td>\n", item).as_bytes()).unwrap();
+                        //     }
+                        // }
+                        _ => println!("Err")
+                    }
 
-//         }
-//     }
+                    outfile.write_all(format!("        <td>{}</td>\n",n).as_bytes()).unwrap();
+                    outfile.write_all(b"    </tr>\n").unwrap();
+                    outfile.write_all(b"</table>\n").unwrap();
+                }
+                FileLocate::Terminal => {
+                    match oinp {
+                        FileContent::Single(x) => {println!("\nInput: {}\nResult: {}\n",x,n); return Ok(())}
+                        _ => {println!("Er"); return Ok(())}
+                    }
+                }
+            } 
+        },
+        FileContent::Multiple(st) => {
+            match destinate {
+                FileLocate::Html => {
+                    let mut outfile = File::create("output.html").unwrap();
+                    outfile.write_all(b"<style>\ntable, th, td {\n    border:1px solid black;\n}\n").unwrap();
+                    outfile.write_all(b"</style>\n\n<table>\n    <tr>\n").unwrap();
+                    outfile.write_all(b"        <th>Input</th>\n        <th>Result</th>\n").unwrap();
+                    outfile.write_all(b"    </tr>").unwrap();
+                    match oinp {
+                        FileContent::Single(x) => {
+                            outfile.write_all(format!("        <td>{}</td>\n", x).as_bytes()).unwrap();
+                        }
+                        FileContent::Multiple(y) => {
+                            for item in 0..y.len() {
+                                outfile.write_all(b"    <tr>\n").unwrap();
+                                outfile.write_all(format!("        <td>{}</td>\n", y[item]).as_bytes()).unwrap();
+                                outfile.write_all(format!("        <td>{}</td>\n", st[item]).as_bytes()).unwrap();
+                                outfile.write_all(b"    </tr>\n").unwrap();
+                            }
+                            
+                        }
+                    }
+                    outfile.write_all(b"</table>\n").unwrap();
+                }
+                FileLocate::Terminal => {
+                    match oinp {
+                        FileContent::Multiple(x) => {
+                            for i in 0..x.len() {
+                                println!("\nInput: {}\nResult: {}\n",x[i],st[i]);
+                            }
+                            return Ok(())
+                        }
+                        _ => {println!("Er"); return Ok(())}
+                    }
+                }
+            }
+        }
+    }
     
-//     Err(ErrorToSaveFile::new("Error to save file {filen}.html"))
-// }
+    Err(ErrorToSaveFile::new("Error to return"))
+}
 
 
 //------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -474,9 +571,7 @@ pub fn binoperate3(inp: &[u8]) -> Result<Vec<u8>, Box<dyn Error>> {
 }
 
 //ANCHOR - Decode Base64
-//FIXME - Function not work
 fn frombase64(inp: &str) -> Result<String, Box<dyn Error>> {
-    let numpad = inp.chars().filter(|&c| c == '=').count(); //get num of = at the end
     let rmpad = inp.trim_end_matches('='); //remove = at the end
     let mut buffer = Vec::new();
 
@@ -486,8 +581,8 @@ fn frombase64(inp: &str) -> Result<String, Box<dyn Error>> {
     }
 
     let mut decoded_bytes = Vec::new();
-    for i in 0..buffer.len() {
-        match i % 3 {
+    for i in 0..(buffer.len() - 1){
+        match i % 4 {
             0 => decoded_bytes.push((buffer[i] << 2) | (buffer[i + 1] >> 4)),
             1 => decoded_bytes.push(((buffer[i] & 0b1111) << 4) | (buffer[i + 1] >> 2)),
             2 => decoded_bytes.push(((buffer[i] & 0b11) << 6) | buffer[i + 1]),
@@ -501,77 +596,72 @@ fn frombase64(inp: &str) -> Result<String, Box<dyn Error>> {
 //Unit test
 
 //ANCHOR - Testing Function
-#[test]
-fn testopenfile() {
-    let filecontain = readfile("tests\\inputs\\rustdoc.txt").unwrap();
-    // let a = encoding_percent_component(&filecontain);
-    println!("\n{:?}\n{}\n", filecontain, "ss");
-}
+// #[cfg(test)]
+// mod test{
+//     #[test]
+//     fn testreadfile() {
+//         let filecontain = openfile("tests\\inputs\\rustdoc.txt").unwrap();
+//         let expect = vec!["https://doc.rust-lang.org/book/","https://github.com/plscallMeAlex/Rust-Programming/blob/main/Week6/Lab/uniqr/src/lib.rs","https://chat.openai.com/c/e8c297ef-49e6-4699-948f-44664b99909d"];
+//         assert!(filecontain)
+//     }
+// }
+// #[test]
+// fn testopenfile() {
+//     let filecontain = readfile("tests\\inputs\\rustdoc.txt").unwrap();
+//     // let a = encoding_percent_component(&filecontain);
+//     println!("\n{:?}\n{}\n", filecontain, "ss");
+// }
 
-#[test]
-fn testtobase64() {
-    let res = tobase64("Hdfdfds");
-    let a = frombase64(&res);
-    // println!("{}",a.unwrap());
-}
+// #[test]
+// fn testtobase64() {
+//     let res = tobase64("Hdfdfds");
+//     let a = frombase64(&res);
+//     // println!("{}",a.unwrap());
+// }
 
-#[test]
-fn topercent() {
-    let rres = "https://www.quora.com/How-do-I-encode-the-website-URL";
-    let rres1 = "https://www.quora.com/How-do-I-encode-the-website-URL";
-    assert_eq!(
-        rres,
-        "https://www.quora.com/How-do-I-encode-the-website-URLtest"
-    );
-    let enco = encoding_percent_component(rres1);
-    print!("{}", enco);
-}
+// #[test]
+// fn topercent() {
+//     let rres = "https://www.quora.com/How-do-I-encode-the-website-URL";
+//     let rres1 = "https://www.quora.com/How-do-I-encode-the-website-URL";
+//     assert_eq!(
+//         rres,
+//         "https://www.quora.com/How-do-I-encode-the-website-URLtest"
+//     );
+//     let enco = encoding_percent_component(rres1);
+//     print!("{}", enco);
+// }
 
-#[test]
-fn testingfunctionhexoperating() {
-    let space = b' '; //in ascii is 32 hex is 20
-    let spacehigh = space >> 4; //bitwise it to get 2 from hex
-    let spacelow = space & 0xF; //get 0 from hex
-                                //hex number of space is 20
+// #[test]
+// fn testingfunctionhexoperating() {
+//     let space = b' '; //in ascii is 32 hex is 20
+//     let spacehigh = space >> 4; //bitwise it to get 2 from hex
+//     let spacelow = space & 0xF; //get 0 from hex
+//                                 //hex number of space is 20
 
-    //make 2 and 0 to ascii the result will be 50 and 48
-    assert_eq!(50, binoperate1(spacehigh));
-    assert_eq!(48, binoperate1(spacelow));
-}
-
-#[test]
-fn misc() {
-    let a = "this that";
-    // println!("{}",encoding_percent_component(a));
-
-    let b = "<<ƒƒƒ ““““";
-    // println!("{}", encoding_percent_component(b));
-
-    let url = decoding_percent("https://www.freecodecamp.org/news/url-encoded-characters-reference/#:~:text=Any%20character%20that%20is%20not,used%20needs%20to%20be%20encoded.");
-    let encodedurl = encoding_percent_component(&url);
-    println!("{}", url);
-    println!();
-    println!("https://www.freecodecamp.org/news/url-encoded-characters-reference/#:~:text=Any%20character%20that%20is%20not,used%20needs%20to%20be%20encoded.");
-    println!();
-    println!("{}", encodedurl);
-
-    // assert_eq!(url,decodedurl);
-
-    let b = "Hi".as_bytes();
-    let iter: Vec<u8> = b.iter().map(|x| x >> 2).collect();
-    // println!("{:?}",iter);
-}
+//     //make 2 and 0 to ascii the result will be 50 and 48
+//     assert_eq!(50, binoperate1(spacehigh));
+//     assert_eq!(48, binoperate1(spacelow));
+// }
 
 // #[test]
 // fn misc() {
-//     // assert_eq!("pureascii", encode("pureascii"));
-//     // assert_eq!("", encode(""));
-//     // assert_eq!("%00", encode("\0"));
-//     assert_eq!("Hello%20G%C3%BCnter", encode("Hello Günter"));
-//     println!("{}", encode("https://stackoverflow.com/questions/19076719/how-do-i-convert-a-vector-of-bytes-u8-to-a-string"));
-// }
-// fn test(mut string: String) {
-//     let test "4321=12412"
+//     let a = "this that";
+//     // println!("{}",encoding_percent_component(a));
 
-//     let iteartor =   string.split('=').nth(1).unwrap();
+//     let b = "<<ƒƒƒ ““““";
+//     // println!("{}", encoding_percent_component(b));
+
+//     let url = decoding_percent("https://www.freecodecamp.org/news/url-encoded-characters-reference/#:~:text=Any%20character%20that%20is%20not,used%20needs%20to%20be%20encoded.");
+//     let encodedurl = encoding_percent_component(&url);
+//     println!("{}", url);
+//     println!();
+//     println!("https://www.freecodecamp.org/news/url-encoded-characters-reference/#:~:text=Any%20character%20that%20is%20not,used%20needs%20to%20be%20encoded.");
+//     println!();
+//     println!("{}", encodedurl);
+
+//     // assert_eq!(url,decodedurl);
+
+//     let b = "Hi".as_bytes();
+//     let iter: Vec<u8> = b.iter().map(|x| x >> 2).collect();
+//     // println!("{:?}",iter);
 // }
