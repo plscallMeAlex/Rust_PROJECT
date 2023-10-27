@@ -1,1 +1,3 @@
 https://doc.rust-lang.org/book/
+https://github.com/plscallMeAlex/Rust-Programming/blob/main/Week6/Lab/uniqr/src/lib.rs
+https://chat.openai.com/c/e8c297ef-49e6-4699-948f-44664b99909d

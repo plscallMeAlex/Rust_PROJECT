@@ -1,13 +1,16 @@
 use clap::error::Result;
-use clap::{Args, Parser, Subcommand, builder};
+use clap::{builder, Args, Parser, Subcommand};
+use thiserror::Error;
 use std::error::Error;
-use std::{io, clone};
-use std::io::{Read,Write, BufReader};
+use std::fmt::{format, write};
+use std::fs::{self, File};
+use std::io::{BufReader, Read, Write, SeekFrom};
+use std::path::PathBuf;
 use std::str;
 use std::string::FromUtf8Error;
-use std::fs;
-use std::path::PathBuf;
 
+
+//ANCHOR - Clap section
 #[derive(Debug, Parser)]
 #[clap(author, version, about)]
 pub struct Urlencode {
@@ -18,97 +21,166 @@ pub struct Urlencode {
 #[derive(Debug, Subcommand)]
 pub enum Command {
     ///Encode from inputting URL
-    #[clap(short_flag='e',about="Encode input URL components")]
+    #[clap(short_flag = 'e', about = "Encode input URL components")]
     Encode(Form1),
     ///Decode from inputting URL
-    #[clap(short_flag='d', about="Decode input URL components")]
+    #[clap(short_flag = 'd', about = "Decode input URL components")]
     Decode(Form2),
 }
 
 #[derive(Debug, Args)]
 pub struct Form1 {
     ///Input text, file or filepath
-    #[clap(required=true,value_name="TEXT")]
+    #[clap(required = true, value_name = "TEXT/PATH")]
     pub filetext: StringOrPath,
-    
+
     ///Percent-Encoding
-    #[clap(short='p',long="percent",value_name="TO_PERCENT", conflicts_with = "flg2")]
-    pub flg1:bool,
+    #[clap(
+        short = 'p',
+        long = "percent",
+        value_name = "TO_PERCENT",
+        conflicts_with = "flg2"
+    )]
+    pub flg1: bool,
 
     ///Base64-Encoding
-    #[clap(short='b',long="base64",value_name="TO_BASE64")]
-    pub flg2:bool,
+    #[clap(short = 'b', long = "base64", value_name = "TO_BASE64")]
+    pub flg2: bool,
+
+    ///Getting result via table html format
+    #[clap(long="tohtml",value_name="TO_HTML",conflicts_with= "flg4", alias="th", short='h')]
+    pub flg3:bool,
+
+    ///Getting result via terminal
+    #[clap(long="toterminal",value_name="TO_TERMINAL",alias="tt",short='t')]
+    pub flg4:bool,
 }
 
 #[derive(Debug, Args)]
 pub struct Form2 {
     ///Input text, file or filepath
-    #[clap(required=true,value_name="TEXT")]
+    #[clap(required = true, value_name = "TEXT/PATH")]
     pub filetext: StringOrPath,
-    
+
     ///Percent-Decoding
-    #[clap(short='p',long="percent",value_name="FROM_PERCENT")]
-    pub flg1:bool,
+    #[clap(short = 'p', long = "percent", value_name = "FROM_PERCENT")]
+    pub flg1: bool,
 
     ///Base64-Decoding
-    #[clap(short='b',long="base64",value_name="FROM_BASE64")]
-    pub flg2:bool,
+    #[clap(short = 'b', long = "base64", value_name = "FROM_BASE64")]
+    pub flg2: bool,
 }
 
 //------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 //Link function to flag
 
+//ANCHOR - Impl Linking Encode to clap
 impl Form1 {
-    pub fn linking(&self) -> String {
+    pub fn linking(&self) -> Result<FileContent, Box<dyn Error>> {
         match &self.filetext {
             StringOrPath::String(inp) => {
                 // println!("{:?}",inp);
                 if self.flg1 {
-                    encoding_percent(&inp)
+                    Ok(FileContent::Single(encoding_percent_component(&inp)))
                 } else if self.flg2 {
-                    tobase64(&inp) //wiil change when to base64 is finish
-                }
-                 else {
-                    encoding_percent(&inp) //for default choice
-                }
-            },
-            StringOrPath::Path(path) => {
-                // println!("dfdf:{:?}",path);
-                let filecontent = readfile(&path.clone().into_os_string().into_string().unwrap());
-                if self.flg1 {
-                    encoding_percent(&filecontent.unwrap())
-                } else if self.flg2 {
-                    tobase64(&filecontent.unwrap()) //wiil change when to base64 is finish
+                    Ok(FileContent::Single(tobase64(&inp))) //wiil change when to base64 is finish
                 } else {
-                    encoding_percent(&filecontent.unwrap()) //for default choice
+                    Ok(FileContent::Single(tobase64(&inp))) //for default choice
                 }
-            },
+            }
+            StringOrPath::Path(path) => {
+                let filecontent = readfile(&path.clone().into_os_string().into_string().unwrap())?;
+                match filecontent {
+                    FileContent::Multiple(lines) => {
+                        if self.flg1 {
+                            let mut processed_lines = Vec::new();
+                            for i in lines {
+                                let a = encoding_percent_component(&i);
+                                processed_lines.push(a);
+                            }
+                            Ok(FileContent::Multiple(processed_lines))
+                        } else if self.flg2 {
+                            let mut processed_lines = Vec::new();
+                            for i in lines {
+                                let a = tobase64(&i);
+                                processed_lines.push(a);
+                            }
+                            Ok(FileContent::Multiple(processed_lines))
+                        } else {
+                            let mut processed_lines = Vec::new();
+                            for i in lines {
+                                let a = encoding_percent_component(&i);
+                                processed_lines.push(a);
+                            }
+                            Ok(FileContent::Multiple(processed_lines))
+                        }
+                    }
+                    FileContent::Single(chr) => {
+                        if self.flg1 {
+                            Ok(FileContent::Single(encoding_percent_component(&chr)))
+                        } else if self.flg2 {
+                            Ok(FileContent::Single(tobase64(&chr)))
+                        } else {
+                            Ok(FileContent::Single(encoding_percent_component(&chr)))
+                        }
+                    }
+                }
+            }
         }
     }
 }
 
+//ANCHOR - Impl Linking Decode to clap
 impl Form2 {
-    pub fn linking(&self) -> String {
+    pub fn linking(&self) -> Result<FileContent, Box<dyn Error>> {
         match &self.filetext {
             StringOrPath::String(inp) => {
                 if self.flg1 {
-                    decoding_percent(&inp)
+                    Ok(FileContent::Single(decoding_percent(&inp)))
                 } else if self.flg2 {
-                    frombase64(&inp).unwrap() //wiil change when to base64 is finish
+                    Ok(FileContent::Single(frombase64(&inp).unwrap())) //wiil change when to base64 is finish
                 } else {
-                    decoding_percent(&inp) //for default choice
+                    Ok(FileContent::Single(decoding_percent(&inp))) //for default choice
                 }
-            },
+            }
             StringOrPath::Path(path) => {
-                let filecontent = readfile(&path.clone().into_os_string().into_string().unwrap());
-                if self.flg1 {
-                    decoding_percent(&filecontent.unwrap())
-                } else if self.flg2 {
-                    frombase64(&filecontent.unwrap()).unwrap() //wiil change when to base64 is finish
-                } else {
-                    decoding_percent(&filecontent.unwrap()) //for default choice
+                let filecontent = readfile(&path.clone().into_os_string().into_string().unwrap())?;
+                match filecontent {
+                    FileContent::Multiple(lines) => {
+                        if self.flg1 {
+                            let mut processed_lines = Vec::new();
+                            for i in lines {
+                                let a = decoding_percent(&i);
+                                processed_lines.push(a);
+                            }
+                            Ok(FileContent::Multiple(processed_lines))
+                        } else if self.flg2 {
+                            let mut processed_lines = Vec::new();
+                            for i in lines {
+                                let a = frombase64(&i).unwrap();
+                                processed_lines.push(a);
+                            }
+                            Ok(FileContent::Multiple(processed_lines))
+                        } else {
+                            let mut processed_lines = Vec::new();
+                            for i in lines {
+                                let a = decoding_percent(&i);
+                                processed_lines.push(a);
+                            }
+                            Ok(FileContent::Multiple(processed_lines))
+                        }
+                    }
+                    FileContent::Single(chr) => {
+                        if self.flg1 {
+                            Ok(FileContent::Single(decoding_percent(&chr)))
+                        } else if self.flg2 {
+                            Ok(FileContent::Single(frombase64(&chr)?))
+                        } else {
+                            Ok(FileContent::Single(decoding_percent(&chr)))
+                        }
+                    }
                 }
-            },
+            }
         }
     }
 }
@@ -134,49 +206,119 @@ impl std::str::FromStr for StringOrPath {
 }
 
 //------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-//For reading from file
+//For reading from file and saving the result to html table
 
-pub fn readfile(filename:&str,) -> Result<String, Box<dyn Error>>{
-    match fs::read_to_string(filename) {
-        Ok(content) => Ok(content),
-        Err(err) => {eprintln!("Error to read file {}: {}", filename,err);
-            Err(Box::new(err))
-        }
+#[derive(Debug)]
+pub enum FileContent {
+    Single(String),
+    Multiple(Vec<String>),
+}
+
+#[derive(Debug)]
+pub enum FileLocate {
+   Html,
+   Terminal, 
+}
+
+#[derive(Error, Debug)]
+pub struct ErrorToSaveFile {
+    msg:String,
+}
+
+impl std::fmt::Display for ErrorToSaveFile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.msg)
     }
 }
+
+impl ErrorToSaveFile { //create my own error
+    pub fn new(msg:&str) -> Self {
+        ErrorToSaveFile { msg: msg.to_string() }
+    }
+}
+
+//ANCHOR - Readfile
+pub fn readfile(filename: &str) -> Result<FileContent, Box<dyn Error>> {
+    let content = fs::read_to_string(filename)?;
+    let lines: Vec<String> = content.lines().map(|f| f.to_string()).collect();
+
+    match lines.len() {
+        0 => Err("Empty".into()),
+        1 => Ok(FileContent::Single(lines[0].clone())),
+        _ => Ok(FileContent::Multiple(lines)),
+    }
+}
+
+// //ANCHOR - Savefile
+// pub fn savefile(filen:&str, wtop:FileContent, destinate: FileLocate) -> Result<(),ErrorToSaveFile> {
+//     match wtop {
+//         FileContent::Single(n) => {
+//             match destinate {
+//                 FileLocate::Html => {
+//                     let mut outfile = File::create(filen).unwrap();
+//                     outfile.write_all(b"<style>\ntable, td {{\n    border:1px solid black;\n}}\n").unwrap();
+//                     outfile.write_all(b"</style>\n\n<table>\n    <tr>\n").unwrap();
+//                     outfile.write_all(b"        <th>Input</th>\n        <th>Result</th>\n").unwrap();
+//                     outfile.write_all(b"    </tr>").unwrap();
+//                     outfile.write_all(b"    <tr>\n").unwrap();
+//                     outfile.write_all(format!("        <td>{}</td>\n",)).unwrap();
+//                     outfile.write_all(format!("        <td>{}</td>\n",n).as_bytes()).unwrap();
+//                     outfile.write_all(b("    </tr>\n")).unwrap();
+//                     outfile.write_all(b"</table>\n").unwrap();
+//                 }
+//                 FileLocate::Terminal => {
+//                     Ok(println!("Result:{}",n)).unwrap()
+//                 }
+//             } 
+//         },
+//         FileContent::Multiple(st) => {
+
+//         }
+//     }
+    
+//     Err(ErrorToSaveFile::new("Error to save file {filen}.html"))
+// }
+
 
 //------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 //Percent Encoding and Decoding
 
-#[inline]
-pub fn encoding_percent(inp: &str) -> String {
+//ANCHOR - Encode Percent
+pub fn encoding_percent_component(inp: &str) -> String {
     let mut buffer = Vec::new();
     for &i in inp.as_bytes() {
         match i {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'$' | b'-' | b'_' | b'.' |
-            b'+' | b'!' | b'*' | b'(' | b')' => {
-                buffer.push(i) 
-            },
-            _ => {buffer.push(b'%');
-            buffer.push(binoperate1(i >> 4)); //for getting 4bits high| example pass i>>4 = 3
-            buffer.push(binoperate1(i & 0xF));//for getting 4bits low| example pass i & 0xF = 2
+            b'A'..=b'Z'
+            | b'a'..=b'z'
+            | b'0'..=b'9'
+            | b'$'
+            | b'-'
+            | b'_'
+            | b'.'
+            | b'+'
+            | b'!'
+            | b'*'
+            | b'('
+            | b')' => buffer.push(i),
+            _ => {
+                buffer.push(b'%');
+                buffer.push(binoperate1(i >> 4)); //for getting 4bits high| example pass i>>4 = 3
+                buffer.push(binoperate1(i & 0xF)); //for getting 4bits low| example pass i & 0xF = 2
             }
-        }        
+        }
     }
-    let encoded = unsafe{String::from_utf8_unchecked(buffer)};
-    encoded
+    unsafe { String::from_utf8_unchecked(buffer) }
 }
 
-#[inline]
 pub fn binoperate1(digit: u8) -> u8 {
     match digit {
-        0..=9 => b'0' + digit, //it start from 48 + ... it return a number
+        0..=9 => b'0' + digit,        //it start from 48 + ... it return a number
         10..=15 => b'A' + digit - 10, //start from 65 + ... - 10 it will return a char
         _ => panic!("Invalid input: {}", digit),
     }
 }
 
-#[inline]
+//ANCHOR - Decode Percent
 pub fn decoding_percent(inp: &str) -> String {
     let mut buffer: Vec<u8> = Vec::new();
     let mut bytes = inp.as_bytes().iter();
@@ -201,7 +343,6 @@ pub fn decoding_percent(inp: &str) -> String {
     String::from_utf8(buffer).expect("Invalid UTF-8 sequence")
 }
 
-#[inline]
 pub fn binoperate2(inp: u8) -> Option<u8> {
     match inp {
         b'0'..=b'9' => Some(inp - b'0'),
@@ -214,19 +355,19 @@ pub fn binoperate2(inp: u8) -> Option<u8> {
 //------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 //Base64 Misc: Matching, trait, etc.
 
-fn matchingb64(inp:u8) -> u8{
+fn matchingb64(inp: u8) -> u8 {
     match inp {
         0..=25 => b'A' + inp,
         26..=51 => b'a' + (inp - 26),
         52..=61 => b'0' + (inp - 52),
         62 => b'+',
         63 => b'/',
-        _ => panic!("Invalid")
+        _ => panic!("Invalid"),
     }
 }
 
-fn matchingb642(inp:u8) -> Option<u8> {
-    match inp{
+fn matchingb642(inp: u8) -> Option<u8> {
+    match inp {
         b'A'..=b'Z' => Some(inp - b'A'),
         b'a'..=b'z' => Some(inp - b'a' + 26),
         b'0'..=b'9' => Some(inp - b'0' + 52),
@@ -236,118 +377,109 @@ fn matchingb642(inp:u8) -> Option<u8> {
     }
 }
 
-trait ChecklastDig {
-    fn fromlastindex(&self, n:usize) -> char;
-}
-
-impl<'a> ChecklastDig for &'a str {
-    fn fromlastindex(&self, n:usize) -> char {
-        self.chars().rev().nth(n).expect("Out of range")
-    }
-}
-
 //------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-//Base64 Encoding and Decoding 
+//Base64 Encoding and Decoding
 
-#[inline]
+//ANCHOR - Encode Base64
 pub fn tobase64(inp: &str) -> String {
-    let oldbuffer = decoding_percent(inp); //need to decode first before converting
-    let iter:Vec<_> = oldbuffer.as_bytes().chunks(3).collect(); //type: [[u8,u8,u8]] (3 bytes)
+    let iter: Vec<_> = inp.as_bytes().chunks(3).collect(); //type: [[u8,u8,u8]] (3 bytes)
     let mut result = Vec::new();
-    let mut checking:u8 = 0;
+    let mut checking: u8 = 0;
     for i in iter {
-        if i.len() == 2{
+        if i.len() == 2 {
             checking = 2;
         } else if i.len() == 1 {
             checking = 1;
         }
 
         let a = binoperate3(i).unwrap();
-        for j in a{
+        for j in a {
             result.push(matchingb64(j));
         }
     }
-    println!("{:?}", result);
-    let mut returnstring = String::from_utf8(result).expect("Invalid");
+
+    let returnstring = String::from_utf8(result).expect("Invalid");
     match checking {
-        1 => format!("{}==",returnstring),
-        2 => format!("{}=",returnstring),
+        1 => format!("{}==", returnstring),
+        2 => format!("{}=", returnstring),
         _ => returnstring,
     }
 }
 
-#[inline]
-pub fn binoperate3(inp: &[u8]) -> Result<Vec<u8>, Box<dyn Error>>{
+pub fn binoperate3(inp: &[u8]) -> Result<Vec<u8>, Box<dyn Error>> {
+    //make it to binary format
     match inp.len() {
         3 => {
             let res = format!("{:08b}{:08b}{:08b}", inp[0], inp[1], inp[2]);
-            let newbase64 = res.as_bytes().chunks(6).map(str::from_utf8).collect::<Result<Vec<&str>, _>>().unwrap();
-            let newbase64s:Vec<u8> = newbase64.iter().map(|&b| u8::from_str_radix(b, 2).unwrap()).collect();
+            let newbase64 = res
+                .as_bytes()
+                .chunks(6)
+                .map(str::from_utf8)
+                .collect::<Result<Vec<&str>, _>>()
+                .unwrap();
+            let newbase64s: Vec<u8> = newbase64
+                .iter()
+                .map(|&b| u8::from_str_radix(b, 2).unwrap())
+                .collect();
             Ok(newbase64s)
-        },
+        }
         2 => {
             let res = format!("{:08b}{:08b}", inp[0], inp[1]);
-            let mut newbase64 = res.as_bytes().chunks(6).map(str::from_utf8).collect::<Result<Vec<&str>, _>>().unwrap();
+            let mut newbase64 = res
+                .as_bytes()
+                .chunks(6)
+                .map(str::from_utf8)
+                .collect::<Result<Vec<&str>, _>>()
+                .unwrap();
             let mut adjust = newbase64[newbase64.len() - 1].to_string();
 
             if let Some(last_element) = newbase64.last_mut() {
-            while adjust.len() < 6 {
-                adjust.push('0');
+                while adjust.len() < 6 {
+                    adjust.push('0');
+                }
+                *last_element = &adjust;
             }
-            *last_element = &adjust;
-            }
-                 
-            let newbase64s:Vec<u8> = newbase64.iter().map(|&b| u8::from_str_radix(b, 2).unwrap()).collect();
+
+            let newbase64s: Vec<u8> = newbase64
+                .iter()
+                .map(|&b| u8::from_str_radix(b, 2).unwrap())
+                .collect();
             Ok(newbase64s)
-        },
+        }
         1 => {
             let res = format!("{:08b}", inp[0]);
-            let mut newbase64 = res.as_bytes().chunks(6).map(str::from_utf8).collect::<Result<Vec<&str>, _>>().unwrap();
+            let mut newbase64 = res
+                .as_bytes()
+                .chunks(6)
+                .map(str::from_utf8)
+                .collect::<Result<Vec<&str>, _>>()
+                .unwrap();
             let mut adjust = newbase64[newbase64.len() - 1].to_string();
 
             if let Some(last_element) = newbase64.last_mut() {
-            while adjust.len() < 6 {
-                adjust.push('0');
+                while adjust.len() < 6 {
+                    adjust.push('0');
+                }
+                *last_element = &adjust;
             }
-            *last_element = &adjust;
-            }
-            
-            let newbase64s:Vec<u8> = newbase64.iter().map(|&b| u8::from_str_radix(b, 2).unwrap()).collect();
-            Ok(newbase64s)
-        },
-        _ => Err("Invalid".into()),
 
+            let newbase64s: Vec<u8> = newbase64
+                .iter()
+                .map(|&b| u8::from_str_radix(b, 2).unwrap())
+                .collect();
+            Ok(newbase64s)
+        }
+        _ => Err("Invalid".into()),
     }
 }
 
-// //ANCHOR - Decoding function from base64
-//NOTE - iter from the first char then if it found = then it will stop
-
-// pub fn frombase64(input: &str) -> Result<String, Box<dyn Error>> {
-//     // Remove padding characters
-//     let input = input.trim_end_matches('=');
-
-//     // Split input into 6-bit chunks
-//     let chunks: Vec<&str> = input.chars().collect::<Vec<char>>().chunks(6).map(|c| c.iter().collect()).collect();
-
-//     // Convert 6-bit chunks to 8-bit bytes
-//     let bytes: Vec<u8> = chunks.into_iter()
-//         .map(|chunk| {
-//             let num = u8::from_str_radix(chunk, 2)?;
-//             Ok(num << 2) // Shift left by 2 bits (to convert 6 bits to 8 bits)
-//         })
-//         .collect::Result<Vec<u8>,Box<Error>>?;
-
-//     // Decode percent encoding
-//     let decoded_bytes = decoding_percent(&String::from_utf8(bytes)?);
-
-//     Ok(decoded_bytes)
-// }
-
-fn frombase64(inp: &str) -> Option<String> {
-    let rmpad = inp.trim_end_matches('=');
-    let numpad = inp.chars().filter(|&c| c == '=').count();
+//ANCHOR - Decode Base64
+//FIXME - Function not work
+fn frombase64(inp: &str) -> Result<String, Box<dyn Error>> {
+    let numpad = inp.chars().filter(|&c| c == '=').count(); //get num of = at the end
+    let rmpad = inp.trim_end_matches('='); //remove = at the end
     let mut buffer = Vec::new();
+
     for i in rmpad.as_bytes() {
         let rev1 = matchingb642(*i).unwrap();
         buffer.push(rev1);
@@ -355,72 +487,44 @@ fn frombase64(inp: &str) -> Option<String> {
 
     let mut decoded_bytes = Vec::new();
     for i in 0..buffer.len() {
-        match i % 4 {
+        match i % 3 {
             0 => decoded_bytes.push((buffer[i] << 2) | (buffer[i + 1] >> 4)),
             1 => decoded_bytes.push(((buffer[i] & 0b1111) << 4) | (buffer[i + 1] >> 2)),
             2 => decoded_bytes.push(((buffer[i] & 0b11) << 6) | buffer[i + 1]),
             _ => (),
         }
     }
-    String::from_utf8(decoded_bytes).ok()
+    String::from_utf8(decoded_bytes).map_err(|e| e.into())
 }
-//     for &byte in input.as_bytes() {
-//         if byte == b'=' {
-//             break; // Padding character, stop decoding
-//         }
-        
-//         if let Some(&value) = char_to_value.get(byte as usize) {
-//             if value != -1 {
-//                 buffer = (buffer << 6) | (value as u32);
-//                 buffer_size += 6;
-
-//                 while buffer_size >= 8 {
-//                     buffer_size -= 8;
-//                     result.push(((buffer >> buffer_size) & 0xFF) as u8);
-//                 }
-//             } else {
-//                 return None; // Invalid Base64 character
-//             }
-//         } else {
-//             return None; // Invalid input character
-//         }
-//     }
-
-//     // Check for leftover bits in the buffer
-//     if buffer_size >= 8 {
-//         return None; // Invalid Base64 encoding
-//     }
-
-//     // Convert the decoded bytes to a UTF-8 string
-//     match String::from_utf8(result) {
-//         Ok(decoded_string) => Some(decoded_string),
-//         Err(_) => None, // Invalid UTF-8 sequence
-//     }
-// }
-
 
 //------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 //Unit test
 
+//ANCHOR - Testing Function
 #[test]
-fn testopenfile(){
+fn testopenfile() {
     let filecontain = readfile("tests\\inputs\\rustdoc.txt").unwrap();
-    let a = encoding_percent(&filecontain);
-    println!("\n{}\n{}\n",filecontain,a);
-
+    // let a = encoding_percent_component(&filecontain);
+    println!("\n{:?}\n{}\n", filecontain, "ss");
 }
 
-//ANCHOR - Testing
 #[test]
-fn testtobase64(){
+fn testtobase64() {
     let res = tobase64("Hdfdfds");
-    // println!("\n{}",res);
-    // let res1 = tobase64("df");
-    // println!("{}",res1);
-    // let res2 = tobase64("d");
-    // println!("{}",res2);
     let a = frombase64(&res);
     // println!("{}",a.unwrap());
+}
+
+#[test]
+fn topercent() {
+    let rres = "https://www.quora.com/How-do-I-encode-the-website-URL";
+    let rres1 = "https://www.quora.com/How-do-I-encode-the-website-URL";
+    assert_eq!(
+        rres,
+        "https://www.quora.com/How-do-I-encode-the-website-URLtest"
+    );
+    let enco = encoding_percent_component(rres1);
+    print!("{}", enco);
 }
 
 #[test]
@@ -428,32 +532,34 @@ fn testingfunctionhexoperating() {
     let space = b' '; //in ascii is 32 hex is 20
     let spacehigh = space >> 4; //bitwise it to get 2 from hex
     let spacelow = space & 0xF; //get 0 from hex
-    //hex number of space is 20
-    
+                                //hex number of space is 20
+
     //make 2 and 0 to ascii the result will be 50 and 48
-    assert_eq!(50,binoperate1(spacehigh));
-    assert_eq!(48,binoperate1(spacelow));
-
+    assert_eq!(50, binoperate1(spacehigh));
+    assert_eq!(48, binoperate1(spacelow));
 }
-
 
 #[test]
 fn misc() {
     let a = "this that";
-    println!("{}",encoding_percent(a));
+    // println!("{}",encoding_percent_component(a));
 
     let b = "<<ƒƒƒ ““““";
-    println!("{}", encoding_percent(b));
-    
-    let url = "https://doc.rust-lang.org/std/option/enum.Option.html";
-    let encodedurl = encoding_percent(url);
-    let decodedurl = decoding_percent(&encodedurl);
+    // println!("{}", encoding_percent_component(b));
 
-    assert_eq!(url,decodedurl);
-    
+    let url = decoding_percent("https://www.freecodecamp.org/news/url-encoded-characters-reference/#:~:text=Any%20character%20that%20is%20not,used%20needs%20to%20be%20encoded.");
+    let encodedurl = encoding_percent_component(&url);
+    println!("{}", url);
+    println!();
+    println!("https://www.freecodecamp.org/news/url-encoded-characters-reference/#:~:text=Any%20character%20that%20is%20not,used%20needs%20to%20be%20encoded.");
+    println!();
+    println!("{}", encodedurl);
+
+    // assert_eq!(url,decodedurl);
+
     let b = "Hi".as_bytes();
-    let iter:Vec<u8> = b.iter().map(|x| x>>2).collect();
-    println!("{:?}",iter);
+    let iter: Vec<u8> = b.iter().map(|x| x >> 2).collect();
+    // println!("{:?}",iter);
 }
 
 // #[test]
@@ -463,4 +569,9 @@ fn misc() {
 //     // assert_eq!("%00", encode("\0"));
 //     assert_eq!("Hello%20G%C3%BCnter", encode("Hello Günter"));
 //     println!("{}", encode("https://stackoverflow.com/questions/19076719/how-do-i-convert-a-vector-of-bytes-u8-to-a-string"));
+// }
+// fn test(mut string: String) {
+//     let test "4321=12412"
+
+//     let iteartor =   string.split('=').nth(1).unwrap();
 // }
